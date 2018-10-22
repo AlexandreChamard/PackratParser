@@ -160,7 +160,7 @@ pAnd f1 f2 d = case f1 d of
         _ -> NoParsed
     _ -> NoParsed
 
--- pSpaces :: Derivs -> Resulat a
+-- pSpace :: Derivs -> Resulat a
 pSpace d = pIs pChar isSpace d
 -- pSpaces :: Derivs -> Resulat [a]
 pSpaces d = pMany pSpace d

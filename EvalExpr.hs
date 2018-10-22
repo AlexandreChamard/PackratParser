@@ -1,14 +1,17 @@
 module EvalExpr (eval) where
 
 import Data.Char
+import Data.Fixed
 import Debug.Trace
+import Numeric
 
 data Result t = Parsed t Derivs | NoParsed | Debug String
 
 data Derivs = Derivs {
-    dvPrimary       :: Result Int,
-    dvSecondary     :: Result Int,
-    dvParenthesis   :: Result Int,
+    dvPrimary       :: Result Float,
+    dvSecondary     :: Result Float,
+    dvPow           :: Result Float,
+    dvParenthesis   :: Result Float,
     dvFrac          :: Result Float,
     dvNumber        :: Result Int,          -- use to pars numbers
     dvUNumber       :: Result Int,          -- use to pars usigned numbers
@@ -21,9 +24,10 @@ data Derivs = Derivs {
 
 parse :: String -> Derivs
 parse s = d where
-    d   = Derivs prim sec par f nb unb dec qstr echr chr end
+    d   = Derivs prim sec pow par f nb unb dec qstr echr chr end
     prim = pPrimary d
     sec = pSecondary d
+    pow = pPow d
     par = pParenthesis d
     f = pFrac d
     nb  = pNumber d
@@ -159,53 +163,65 @@ pAnd f1 f2 d = case f1 d of
         _ -> NoParsed
     _ -> NoParsed
 
--- pSpaces :: Derivs -> Resulat a
+-- pSpace :: Derivs -> Resulat a
 pSpace d = pIs pChar isSpace d
 -- pSpaces :: Derivs -> Resulat [a]
 pSpaces d = pMany pSpace d
 
 
-pPrimary :: Derivs -> Result Int
-pPrimary d = case dvSecondary d of
-    Parsed nLeft d' -> case dvChar d' of
-        Parsed '+' d'' -> case dvPrimary d'' of
+pPrimary :: Derivs -> Result Float
+pPrimary d = case pAnd pSpaces dvSecondary d of
+    Parsed nLeft d' -> case pAnd pSpaces dvChar d' of
+        Parsed '+' d'' -> case pAnd pSpaces dvPrimary d'' of
             Parsed nRight d''' -> Parsed (nLeft + nRight) d'''
             _ -> NoParsed
-        Parsed '-' d'' -> case dvPrimary d'' of
+        Parsed '-' d'' -> case pAnd pSpaces dvPrimary d'' of
             Parsed nRight d''' -> Parsed (nLeft - nRight) d'''
             _ -> NoParsed
         _ -> dvSecondary d
     _ -> NoParsed
 
-pSecondary :: Derivs -> Result Int
-pSecondary d = case dvParenthesis d of
-    Parsed nLeft d' -> case dvChar d' of
-        Parsed '*' d'' -> case dvSecondary d'' of 
+pSecondary :: Derivs -> Result Float
+pSecondary d = case pAnd pSpaces dvPow d of
+    Parsed nLeft d' -> case pAnd pSpaces dvChar d' of
+        Parsed '*' d'' -> case pAnd pSpaces dvSecondary d'' of 
             Parsed nRight d''' -> Parsed (nLeft * nRight) d'''
             _ -> NoParsed
-        Parsed '/' d'' -> case dvSecondary d'' of 
-            Parsed nRight d''' -> Parsed (nLeft `div` nRight) d'''
+        Parsed '/' d'' -> case pAnd pSpaces dvSecondary d'' of 
+            Parsed nRight d''' -> Parsed (nLeft / nRight) d'''
             _ -> NoParsed
-        Parsed '%' d'' -> case dvSecondary d'' of 
-            Parsed nRight d''' -> Parsed (nLeft `mod` nRight) d'''
+        Parsed '%' d'' -> case pAnd pSpaces dvSecondary d'' of 
+            Parsed nRight d''' -> Parsed (nLeft `mod'` nRight) d'''
+            _ -> NoParsed
+        _ -> dvPow d
+    _ -> NoParsed
+
+pPow :: Derivs -> Result Float
+pPow d = case pAnd pSpaces dvParenthesis d of
+    Parsed nLeft d' -> case pAnd pSpaces dvChar d' of
+        Parsed '^' d'' -> case pAnd pSpaces dvPow d'' of 
+            Parsed nRight d''' -> Parsed (nLeft ** nRight) d'''
             _ -> NoParsed
         _ -> dvParenthesis d
     _ -> NoParsed
 
-pParenthesis :: Derivs -> Result Int
-pParenthesis d = case dvChar d of
-    Parsed '(' d' -> case dvPrimary d' of
-        Parsed n d'' -> case dvChar d'' of
+pParenthesis :: Derivs -> Result Float
+pParenthesis d = case pAnd pSpaces dvChar d of
+    Parsed '(' d' -> case pAnd pSpaces dvPrimary d' of
+        Parsed n d'' -> case pAnd pSpaces dvChar d'' of
             Parsed ')' d''' -> Parsed n d'''
             _ -> NoParsed
         _ -> NoParsed
-    _ -> dvNumber d
+    _ -> pAnd pSpaces dvFrac d
 
-eval :: String -> Int
+eval :: String -> Float
 eval s = case dvPrimary (parse s) of
-    Parsed t rem -> case dvEnd rem of
-        Parsed (_:_) d -> error "unknow charactere"
+    Parsed t rem -> case pAnd pSpaces dvEnd rem of
+        Parsed (_:_) d -> error "bad ending"
         _ -> t
     _ -> error "pars Error"
 
 
+-- main ->
+    -- si trunc n == n => print n
+    -- sinon showGFloat (Just 2) n ""
