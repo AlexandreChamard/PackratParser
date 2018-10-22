@@ -57,11 +57,13 @@ pFrac d = c1 where
             _ -> NoParsed
         _ -> NoParsed
 
-
 pNumber :: Derivs -> Result Int
 pNumber d = c1 where
     c1 = case dvChar d of
-        Parsed '-' d' -> case pUNumber d' of
+        Parsed '+' d' -> case pNumber d' of
+            Parsed n d'' -> Parsed n d''
+            _ -> NoParsed
+        Parsed '-' d' -> case pNumber d' of
             Parsed n d'' -> Parsed (-n) d''
             _ -> NoParsed
         _ -> c2
