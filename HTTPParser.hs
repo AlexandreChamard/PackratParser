@@ -1,21 +1,38 @@
-module EvalExpr (eval) where
+module HTTPParser (parsHTTP) where
+
+-- HTTP        =   Header "\n" Body ;
+-- Header      =   CMD " " URI " " Version "\n" { HeaderList } ;
+-- CMD         =   Word ;
+-- URI         =   Word ;
+-- Version     =   Word ;
+-- HeaderList  =   HeaderName ": " Data ;
+-- HeaderName  =   Word ;
+-- Data        =   [^'\n']* ;
+-- Body        =   [^EOF]* ;
+-- Word        =   [^' ']* ;
 
 import Data.Char
-import Data.Fixed
+import Data.List
 import Debug.Trace
-import Numeric
 
-data Result t = Parsed t Derivs | NoParsed | Debug String
+data Result t = Parsed t Derivs | NoParsed
+data HTTP = HTTP Header Body
+data Header = Header Cmd Uri Version -- HeaderList
+data Cmd = Cmd String
+data Uri = Uri String
+data Version = Version String
+data HeaderList = HeaderList String String HeaderList | EndOfHeaderList
+data Data = Data String
+data Body = Body String
+
 
 data Derivs = Derivs {
-    dvPrimary       :: Result Float,
-    dvSecondary     :: Result Float,
-    dvPow           :: Result Float,
-    dvParenthesis   :: Result Float,
+    dvHTTP          :: Result HTTP,
     dvFrac          :: Result Float,
     dvNumber        :: Result Int,          -- use to pars numbers
     dvUNumber       :: Result Int,          -- use to pars usigned numbers
     dvDecimal       :: Result Int,          -- use to pars digits
+    dvWord          :: Result String,
     dvQuotedString  :: Result String,       -- use to pars quoted string
     dvEscapedChar   :: Result Char,         -- use to pars escaped characters
     dvChar          :: Result Char,         -- use to pars characters
@@ -24,22 +41,19 @@ data Derivs = Derivs {
 
 parse :: String -> Derivs
 parse s = d where
-    d   = Derivs prim sec pow par f nb unb dec qstr echr chr end
-    prim = pPrimary d
-    sec = pSecondary d
-    pow = pPow d
-    par = pParenthesis d
+    d   = Derivs http f nb unb dec word qstr echr chr end
+    http = pHTTP d
     f = pFrac d
     nb  = pNumber d
     unb = pUNumber d
     dec = pDecimal d
+    word = pWord d
     qstr = pQuotedString d
     echr = pEscapedChar d
     chr = case s of
         (c:s') -> Parsed c (parse s')
         [] -> NoParsed
     end = Parsed s (parse "")
-
 
 pFrac :: Derivs -> Result Float
 pFrac d = c1 where
@@ -57,13 +71,11 @@ pFrac d = c1 where
             _ -> NoParsed
         _ -> NoParsed
 
+
 pNumber :: Derivs -> Result Int
 pNumber d = c1 where
     c1 = case dvChar d of
-        Parsed '+' d' -> case pNumber d' of
-            Parsed n d'' -> Parsed n d''
-            _ -> NoParsed
-        Parsed '-' d' -> case pNumber d' of
+        Parsed '-' d' -> case pUNumber d' of
             Parsed n d'' -> Parsed (-n) d''
             _ -> NoParsed
         _ -> c2
@@ -88,6 +100,11 @@ pDecimal d = case dvChar d of
     Parsed '8' d' -> Parsed 8 d'
     Parsed '9' d' -> Parsed 9 d'
     _ -> NoParsed
+
+pWord :: Derivs -> Result String
+pWord d = case pMany (pIsNot pChar isSpace) d of
+    Parsed "" d' -> NoParsed
+    other -> other
 
 pQuotedString :: Derivs -> Result String
 pQuotedString d = c1 where
@@ -171,61 +188,15 @@ pSpace d = pIs pChar isSpace d
 pSpaces d = pMany pSpace d
 
 
-pPrimary :: Derivs -> Result Float
-pPrimary d = case pAnd pSpaces dvSecondary d of
-    Parsed nLeft d' -> case pAnd pSpaces dvChar d' of
-        Parsed '+' d'' -> case pAnd pSpaces dvPrimary d'' of
-            Parsed nRight d''' -> Parsed (nLeft + nRight) d'''
-            _ -> NoParsed
-        Parsed '-' d'' -> case pAnd pSpaces dvPrimary d'' of
-            Parsed nRight d''' -> Parsed (nLeft - nRight) d'''
-            _ -> NoParsed
-        _ -> dvSecondary d
-    _ -> NoParsed
+pHTTP :: Derivs -> Result HTTP
+pHTTP d = Parsed (HTTP (Header (Cmd "cmd") (Uri "uri") (Version "version")) (Body "body")) d
 
-pSecondary :: Derivs -> Result Float
-pSecondary d = case pAnd pSpaces dvPow d of
-    Parsed nLeft d' -> case pAnd pSpaces dvChar d' of
-        Parsed '*' d'' -> case pAnd pSpaces dvSecondary d'' of 
-            Parsed nRight d''' -> Parsed (nLeft * nRight) d'''
-            _ -> NoParsed
-        Parsed '/' d'' -> case pAnd pSpaces dvSecondary d'' of 
-            Parsed 0.0 d''' -> NoParsed
-            Parsed nRight d''' -> Parsed (nLeft / nRight) d'''
-            _ -> NoParsed
-        Parsed '%' d'' -> case pAnd pSpaces dvSecondary d'' of 
-            Parsed 0.0 d''' -> NoParsed
-            Parsed nRight d''' -> Parsed (nLeft `mod'` nRight) d'''
-            _ -> NoParsed
-        _ -> dvPow d
-    _ -> NoParsed
+getInfoNeeded :: HTTP -> String -> String
+getInfoNeeded (HTTP (Header (Cmd cmd) _ _) _) toGet = cmd
 
-pPow :: Derivs -> Result Float
-pPow d = case pAnd pSpaces dvParenthesis d of
-    Parsed nLeft d' -> case pAnd pSpaces dvChar d' of
-        Parsed '^' d'' -> case pAnd pSpaces dvPow d'' of 
-            Parsed nRight d''' -> Parsed (nLeft ** nRight) d'''
-            _ -> NoParsed
-        _ -> dvParenthesis d
-    _ -> NoParsed
-
-pParenthesis :: Derivs -> Result Float
-pParenthesis d = case pAnd pSpaces dvChar d of
-    Parsed '(' d' -> case pAnd pSpaces dvPrimary d' of
-        Parsed n d'' -> case pAnd pSpaces dvChar d'' of
-            Parsed ')' d''' -> Parsed n d'''
-            _ -> NoParsed
-        _ -> NoParsed
-    _ -> pAnd pSpaces dvFrac d
-
-eval :: String -> Float
-eval s = case dvPrimary (parse s) of
-    Parsed t rem -> case pAnd pSpaces dvEnd rem of
-        Parsed (_:_) d -> error "bad ending"
-        _ -> t
-    _ -> error "pars Error"
-
-
--- main ->
-    -- si trunc n == n => print (trunc n)
-    -- sinon showGFloat (Just 2) n ""
+parsHTTP :: String -> String -> IO String
+parsHTTP file toGet = do
+    allLines <- lines <$> readFile file
+    case pHTTP $ parse (intercalate "\n" allLines) of
+        Parsed http d -> return $ getInfoNeeded http toGet
+        _ -> return $ "Parsed Error"
