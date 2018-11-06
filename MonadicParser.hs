@@ -13,7 +13,7 @@ instance Functor Parser where
     fmap = fmapParser
 
 instance Applicative Parser where
-    pure = pureParser
+    pure = returnParser
     (<*>) = applicateParser
 
 instance Alternative Parser where
@@ -24,14 +24,10 @@ instance Monad Parser where
     (>>=) = bindParser
     return = returnParser
 
-
 fmapParser :: (a -> b) -> Parser a -> Parser b
 fmapParser fab elem = do
     res <- elem
     return (fab res)
-
-pureParser :: a -> Parser a
-pureParser a = return a
 
 applicateParser :: Parser (a -> b) -> Parser a -> Parser b
 applicateParser mfab ma = do
@@ -102,7 +98,7 @@ pOptional p = (do { _ <- p ; return () }) <|> (return ())
 
 -- renvoie un tableau de n elements parsés (ne peut fail)
 pMany :: Parser a -> Parser [a]
-pMany p = many p
+pMany = many
 
 -- renvoie un tableau de d'au moins 1 element parsé
 pMany1 :: Parser a -> Parser [a]
@@ -117,10 +113,7 @@ pSkipMany p = (do { _ <- pMany p ; return () }) <|> (return ())
 
 
 pSkipMany1 :: Parser a -> Parser ()
-pSkipMany1 p = do
-    _ <- p
-    _ <- pSkipMany p
-    return ()
+pSkipMany1 p = p >> pSkipMany p
 
 
 pSepBy :: Parser a -> Parser sep -> Parser [a]
@@ -135,17 +128,11 @@ pSepBy1 p sep = do
 
 
 pEndBy :: Parser a -> Parser end -> Parser [a]
-pEndBy p pend = pMany (do
-    x <- p
-    _ <- pend
-    return x)
+pEndBy p pend = pMany (do { x <- p ; _ <- pend ; return x})
 
 
 pEndBy1 :: Parser a -> Parser end -> Parser [a]
-pEndBy1 p pend = pMany1 (do
-    x <- p
-    _ <- pend
-    return x)
+pEndBy1 p pend = pMany1 (do { x <- p ; _ <- pend ; return x})
 
 
 pSepEndBy :: Parser a -> Parser end -> Parser [a]
@@ -155,7 +142,20 @@ pSepEndBy p pend = (pSepEndBy1 p pend) <|> (return [])
 pSepEndBy1 :: Parser a -> Parser end -> Parser [a]
 pSepEndBy1 p pend = do
     x <- p
-    (do ; _ <- pend ; xs <- pSepEndBy p pend ; return (x:xs)) <|> (return [x])
+    (do { _ <- pend ; xs <- pSepEndBy p pend ; return (x:xs)}) <|> (return [x])
+
+
+pChainl :: Parser a -> Parser (a -> a -> a) -> a -> Parser a
+pChainl p f x = pChainl1 p f <|> return x
+
+pChainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
+pChainl1 p op = do { x <- p ; chain x}
+    where
+        chain x = do {
+            f <- op;
+            y <- p;
+            chain (f x y)
+            } <|> return x
 
 
 -- parse un char donné
@@ -180,7 +180,7 @@ pSpaces :: Parser ()
 pSpaces = pSkipMany (pSatisfy isSpace)
 
 pDigit :: Parser Char
-pDigit = pOneOf "0123456789"
+pDigit = pSatisfy isDigit
 
 pNumber :: Parser Int
 pNumber = do
@@ -193,17 +193,7 @@ pNumber = do
 pUNumber :: Parser Int
 pUNumber = do
     digits <- pMany1 pDigit
-    return (read digits :: Int)
-
-pNumber' :: Parser Int
-pNumber' = do
-    neg <- pMany (pOneOf "+-")
-    n <- pUNumber
-    if odd $ foldl (\sum e -> sum + (if e == '-' then 1 else 0)) 0 neg
-    then
-        return (-n)
-    else
-        return n
+    return $ read digits
 
 pFloat :: Parser Float
 pFloat = do
@@ -212,23 +202,13 @@ pFloat = do
         _ <- pChar '.'
         f' <- pUNumber
         return f')
-    return (read (show n ++ "." ++ show f) :: Float)
+    return $ read (show n ++ "." ++ show f)
 
-pFloat' :: Parser Float
-pFloat' = do
-    n <- pNumber'
-    f <- pOption 0 (do
-        _ <- pChar '.'
-        f' <- pUNumber
-        return f')
-    return (read (show n ++ "." ++ show f) :: Float)
+pWord :: Parser String
+pWord = do
+    c <- pSatisfy isAlpha <|> pChar '_'
+    cs <- pMany (pSatisfy isAlphaNum <|> pChar '_')
+    return $ c:cs
 
-
-data Bla = Bla Char Char deriving Show
-
-parseBla :: Parser Bla
-parseBla = do
-    a <- pChar 'a'
-    _ <- pCount 3 (pChar ' ')
-    b <- pOneOf "abcdef"
-    return $ Bla a b
+pToken :: [String] -> Parser String
+pToken arr = pChoice [pString str | str <- arr]
