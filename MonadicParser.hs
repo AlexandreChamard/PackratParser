@@ -17,8 +17,8 @@ instance Applicative Parser where
     (<*>) = applicateParser
 
 instance Alternative Parser where
-    empty = emptyParser
-    (<|>) = opOrParser
+        empty = emptyParser
+        (<|>) = orParser
 
 instance Monad Parser where
     (>>=) = bindParser
@@ -35,36 +35,50 @@ applicateParser mfab ma = do
     a <- ma
     return (fab a)
 
-emptyParser :: Parser a
-emptyParser = Parser $ \str -> (Left "empty", str)
-
-opOrParser :: Parser a -> Parser a -> Parser a
-opOrParser l r = Parser $ \str -> case parse l str of
+orParser :: Parser a -> Parser a -> Parser a
+orParser l r = Parser $ \str -> case parse l str of
     (Right a, b) -> (Right a, b)
     _ -> parse r str
 
-opOnErrParser :: Parser a -> String -> Parser a
-opOnErrParser p err = Parser $ \str -> case parse p str of
-        (Left e, _) -> (Left err, str)
-        parsed -> parsed
+emptyParser :: Parser a
+emptyParser = Parser $ \ str -> (Left "empty parser", str)
 
 (<?>) :: Parser a -> String -> Parser a
-(<?>) = opOnErrParser
+(<?>) p err = Parser $ \str -> case parse p str of
+    (Left e, _) -> (Left err, str)
+    parsed -> parsed
 
 returnParser :: a -> Parser a
 returnParser a = Parser $ \str -> (Right a, str)
+
+returnError :: String -> Parser a
+returnError err = Parser $ \str -> (Left err, str)
+
+unexpectedError :: String -> Parser a
+unexpectedError err = returnError ("Unexpected token " ++ err)
 
 bindParser :: Parser a -> (a -> Parser b) -> Parser b
 bindParser elem fapb = Parser $ \str -> case parse elem str of
     (Right a, str') -> parse (fapb a) str'
     (Left err, str') -> (Left err, str)
 
+
 -- verifie si le char parsé est valide ou non
 pSatisfy :: (Char -> Bool) -> Parser Char
 pSatisfy f = Parser func
     where
         func "" = (Left "End Of string", "")
-        func (c:cs) = if f c then (Right c, cs) else (Left "Bad parser Char", c:cs)
+        func (c:cs) = if f c then (Right c, cs) else (Left "Bad parsed Char", c:cs)
+
+pTry :: Parser a -> Parser a
+pTry pa = Parser $ \str -> case parse pa str of
+    (Left err, _) -> (Left err, str)
+    resp          -> resp
+
+pNotFollowedBy :: Show a => Parser a -> Parser ()
+pNotFollowedBy pa = Parser $ \str -> case parse pa str of
+    (Left _, _) -> (Right (), str)
+    (Right a, _) -> (Left ("Unexpected token " ++ show a), str)
 
 -- renvoie le premier Parser valide
 pChoice :: [Parser a] -> Parser a
@@ -78,11 +92,7 @@ pCount n p
 
 -- parse un element qui se trouve entre deux autres elements
 pBetween :: Parser open -> Parser close -> Parser a -> Parser a
-pBetween open close p = do
-    _ <- open
-    p' <- p
-    _ <- close
-    return p'
+pBetween open close p = do { _ <- open ; p' <- p ; _ <- close ; return p' }
 
 -- renvoie l'emement parser si réussi sinon renvoie l'element par default
 pOption :: a -> Parser a -> Parser a
@@ -157,6 +167,10 @@ pChainl1 p op = do { x <- p ; chain x}
             chain (f x y)
             } <|> return x
 
+pManyTill :: Parser a -> Parser end -> Parser [a]
+pManyTill pa pend = bla
+    where bla = do { _ <- pend ; return [] } <|> do { x <- pa ; xs <- pManyTill pa pend ; return (x:xs) }
+
 
 -- parse un char donné
 pChar :: Char -> Parser Char
@@ -175,6 +189,12 @@ pNoneOf :: String -> Parser Char
 pNoneOf elems = pSatisfy (not . flip elem elems)
 
 --
+
+peof :: Parser ()
+peof = pNotFollowedBy pAnyChar
+
+pAnyChar :: Parser Char
+pAnyChar = pSatisfy $ \_ -> True
 
 pSpaces :: Parser ()
 pSpaces = pSkipMany (pSatisfy isSpace)
